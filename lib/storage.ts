@@ -1,59 +1,76 @@
 import { Transaction } from "./types";
 
-const KEY = "extrato-dashboard:transacoes:v1";
-
 // -------------------------------------------------------------------
-// Persistência LOCAL (padrão): salva no navegador do usuário.
-// Vantagens: privado (o extrato nunca sai do seu dispositivo), zero
-// configuração, funciona offline. É a opção recomendada para uso pessoal.
+// Persistência no banco (Supabase) via API routes do próprio app.
+// O navegador nunca fala direto com o banco: ele chama /api/data, e o
+// servidor (com a chave secreta) é quem lê e grava. Assim os dados
+// ficam salvos de verdade e sincronizam entre dispositivos.
 // -------------------------------------------------------------------
 
-export function saveTransactions(txs: Transaction[]): void {
-  if (typeof window === "undefined") return;
+export type LoadResult = {
+  configured: boolean;
+  transactions: Transaction[];
+};
+
+export async function loadFromDB(): Promise<LoadResult> {
   try {
-    window.localStorage.setItem(KEY, JSON.stringify(txs));
-  } catch (e) {
-    console.error("Falha ao salvar no navegador:", e);
+    const res = await fetch("/api/data", { cache: "no-store" });
+    const json = await res.json();
+    return {
+      configured: Boolean(json.configured),
+      transactions: Array.isArray(json.transactions) ? json.transactions : [],
+    };
+  } catch {
+    return { configured: false, transactions: [] };
   }
 }
 
-export function loadTransactions(): Transaction[] {
+export async function saveToDB(txs: Transaction[]): Promise<boolean> {
+  try {
+    const res = await fetch("/api/data", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(txs),
+    });
+    const json = await res.json();
+    return Boolean(json.ok);
+  } catch {
+    return false;
+  }
+}
+
+export async function clearDB(): Promise<boolean> {
+  try {
+    const res = await fetch("/api/data", { method: "DELETE" });
+    const json = await res.json();
+    return Boolean(json.ok);
+  } catch {
+    return false;
+  }
+}
+
+// -------------------------------------------------------------------
+// Cache local (opcional): guarda uma cópia no navegador para a tela
+// abrir instantânea mesmo antes do banco responder.
+// -------------------------------------------------------------------
+
+const CACHE_KEY = "extrato-dashboard:cache:v2";
+
+export function readCache(): Transaction[] {
   if (typeof window === "undefined") return [];
   try {
-    const raw = window.localStorage.getItem(KEY);
-    if (!raw) return [];
-    const parsed = JSON.parse(raw);
-    return Array.isArray(parsed) ? parsed : [];
+    const raw = window.localStorage.getItem(CACHE_KEY);
+    return raw ? JSON.parse(raw) : [];
   } catch {
     return [];
   }
 }
 
-export function clearTransactions(): void {
+export function writeCache(txs: Transaction[]): void {
   if (typeof window === "undefined") return;
-  window.localStorage.removeItem(KEY);
-}
-
-// -------------------------------------------------------------------
-// OPCIONAL: persistência na Vercel via Vercel Blob (sincroniza entre
-// dispositivos). Para ativar:
-//   1. npm install @vercel/blob
-//   2. No painel da Vercel: Storage → Create → Blob, conecte ao projeto
-//   3. Descomente a rota em app/api/data/route.ts
-//   4. Troque as chamadas acima por saveRemote/loadRemote abaixo
-// -------------------------------------------------------------------
-
-export async function saveRemote(txs: Transaction[]): Promise<void> {
-  await fetch("/api/data", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(txs),
-  });
-}
-
-export async function loadRemote(): Promise<Transaction[]> {
-  const res = await fetch("/api/data", { cache: "no-store" });
-  if (!res.ok) return [];
-  const data = await res.json();
-  return Array.isArray(data) ? data : [];
+  try {
+    window.localStorage.setItem(CACHE_KEY, JSON.stringify(txs));
+  } catch {
+    /* ignora */
+  }
 }
